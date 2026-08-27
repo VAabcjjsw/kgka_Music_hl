@@ -73,6 +73,13 @@ android {
                 abiFilters.add("arm64-v8a")
             }
             isMinifyEnabled = false
+            // Flutter Gradle 插件在 apply 阶段（早于本脚本体执行）会默认打开
+            // release.shrinkResources = true（见 FlutterPluginUtils.shouldShrinkResources，
+            // 无 -Pshrink 属性时恒为 true）。如果我们只关 minify 而不关 shrinkResources，
+            // AGP 配置期会直接报错：
+            //   "Removing unused resources requires unused code shrinking to be turned on"
+            // 因此必须成对显式关闭。
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
