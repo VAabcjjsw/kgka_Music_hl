@@ -90,8 +90,26 @@ kotlin {
 }
 
 
+// === 依赖解析策略：对 JitPack 等按需构建的仓库不缓存失败结果，确保一次冷启动失败后
+// 等若干秒再次构建时能重新尝试拉取（而不是被 Gradle 本地缓存的 "404 / module not found"
+// 结果一直挡住）。
+configurations.all {
+    resolutionStrategy {
+        // changing 模块（例如 JitPack 的版本号固定但 artifact 是懒构建）不缓存
+        cacheChangingModulesFor(0, "seconds")
+        // 动态版本（1.+、[1.0, 2.0) 等）不缓存，本项目未用，保留默认即可。
+    }
+}
+
 dependencies {
-    implementation("com.github.HChenX:SuperLyricApi:3.4")
+    // SuperLyricApi（https://github.com/HChenX/SuperLyricApi 3.4）
+    // AAR 通过 JitPack 发布。JitPack 是"首次请求时才在服务器端懒构建"，
+    // 所以把该依赖标记为 `changing = true`，配合上面的
+    // `cacheChangingModulesFor(0 seconds)` 让 Gradle 不会永远缓存首次 404。
+    // 同时在 CI workflow 里做了 JitPack 冷启动失败 → sleep 90s → 重试的兜底。
+    implementation("com.github.HChenX:SuperLyricApi:3.4") {
+        isChanging = true
+    }
 }
 
 flutter {

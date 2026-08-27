@@ -127,13 +127,73 @@ jobs:
           set -euo pipefail
           LOG_FILE="build/android-build.log"
           mkdir -p "$(dirname "$LOG_FILE")"
-          echo "🚀 flutter build apk --release --target-platform android-arm64 --no-tree-shake-icons"
-          # 用 tee 同时输出到控制台与日志文件；pipefail 保证 flutter 失败时整个步骤也失败
-          # (之前的 | tail 会吞掉 flutter 的非零退出码导致误判"构建成功")
-          flutter build apk --release \
-            --target-platform android-arm64 \
-            --no-tree-shake-icons \
-            2>&1 | tee "$LOG_FILE"
+
+          BUILD_ARGS=(
+            "apk" "--release"
+            "--target-platform" "android-arm64"
+            "--no-tree-shake-icons"
+          )
+
+          run_build() {
+            # $1 = "first" or "retry"; $2 = extra flutter args (e.g. --refresh-dependencies)
+            local round="$1"
+            local extra="${2:-}"
+            echo
+            echo "============================================================================"
+            echo "🚀 [$round] flutter build ${BUILD_ARGS[*]} $extra"
+            echo "============================================================================"
+            # - 用 tee 同时写 log + 控制台；pipefail 保证 flutter 失败时函数失败
+            # - 第二轮用 >> 方式追加到 LOG_FILE
+            set +e
+            if [[ "$round" == "first" ]]; then
+              flutter build "${BUILD_ARGS[@]}" $extra 2>&1 | tee "$LOG_FILE"
+            else
+              flutter build "${BUILD_ARGS[@]}" $extra 2>&1 | tee -a "$LOG_FILE"
+            fi
+            local rc=${PIPESTATUS[0]}
+            set -e
+            return $rc
+          }
+
+          JITPACK_KEYWORDS=("Could not resolve" "jitpack" "SuperLyricApi" "HChenX")
+          log_matches_jitpack() {
+            local lower
+            lower="$(tr '[:upper:]' '[:lower:]' < "$LOG_FILE")"
+            for kw in $(printf '%s\n' "${JITPACK_KEYWORDS[@]}" | tr '[:upper:]' '[:lower:]'); do
+              if grep -qF -- "$kw" <<<"$lower"; then return 0; fi
+            done
+            return 1
+          }
+
+          set +e
+          run_build "first"
+          FIRST_RC=$?
+          set -e
+
+          if [[ $FIRST_RC -ne 0 ]]; then
+            if log_matches_jitpack; then
+              echo
+              echo "⚠️ 第一轮构建失败，检测到 JitPack/SuperLyricApi 解析错误。"
+              echo "   这通常是 JitPack 首次构建该版本（懒构建）需要 60~120 秒。"
+              echo "   等待 90 秒后执行第二轮构建（--refresh-dependencies 强制刷新依赖缓存）…"
+              sleep 90
+              set +e
+              run_build "retry(jitpack-wait)" "--refresh-dependencies"
+              RETRY_RC=$?
+              set -e
+              if [[ $RETRY_RC -eq 0 ]]; then
+                echo "✅ 第二轮构建成功，JitPack 已在等待期间构建完成 SuperLyricApi:3.4。"
+              else
+                echo "❌ 第二轮构建仍然失败。请检查 Network probe 与最终日志。"
+                exit $RETRY_RC
+              fi
+            else
+              echo "❌ 第一轮构建失败（非 JitPack/SuperLyricApi 类错误），直接失败退出。"
+              exit $FIRST_RC
+            fi
+          else
+            echo "✅ 第一轮构建成功。"
+          fi
 
           echo
           echo "--- flutter-apk outputs ---"
@@ -250,6 +310,19 @@ jobs:
              → Flutter 官方插件在 apply 时会动态注入 maven 仓库，因此**不能使用
              FAIL_ON_PROJECT_REPOS**；必须改为
              \`repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\`。
+          1b. **AGP / Kotlin Gradle Plugin Marker 找不到**
+              表现：\`Plugin [id: 'com.android.application', version: 'x.y.z', apply: false] was not found …
+              could not resolve plugin artifact 'com.android.application.gradle.plugin:x.y.z'\`。
+              原因：Google Maven 并非对每个 AGP 小版本都发布 plugin marker pom（用于 \`plugins {}\`
+              语法的解析），但真实实现 jar \`com.android.tools.build:gradle:x.y.z\` 是存在的；
+              在海外 CI 环境更容易触发 marker 解析 404。
+              解决：在 \`android/settings.gradle.kts\` 的
+              \`pluginManagement { resolutionStrategy { eachPlugin { … } } }\` 里，把
+              \`com.android.application / com.android.library / org.jetbrains.kotlin.android / kotlin-android\`
+              等 id 显式映射到真实坐标：
+              \`useModule("com.android.tools.build:gradle:<AGP_VER>")\` 和
+              \`useModule("org.jetbrains.kotlin:kotlin-gradle-plugin:<KOTLIN_VER>")\`；
+              同时把 AGP 降到 8.6.1、Kotlin 降到 2.0.20（Flutter stable 验证过的组合，进一步降低解析风险）。
           2. **JitPack 仓库不可达**  
              表现：\`Could not resolve com.github.HChenX:SuperLyricApi:3.4\`  
              → 查看上方 "Network probe" step；若 JitPack ❌，可在构建机上使用镜像 \`https://www.jitpack.io\`。
