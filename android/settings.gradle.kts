@@ -65,14 +65,18 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
-    // ⚠️ 注意：不能使用 FAIL_ON_PROJECT_REPOS —— Flutter 官方 Gradle 插件
-    // `dev.flutter.flutter-gradle-plugin` 在 apply 时会动态向项目的
-    // repositories 注入一个 maven 仓库（用于拉取 flutter_embedding 等），
-    // 在 FAIL_ON_PROJECT_REPOS 模式下会直接报错退出：
-    //   "repository 'maven' was added by plugin 'dev.flutter.flutter-gradle-plugin'"
-    // 使用 PREFER_SETTINGS 既能保证 settings 中声明的仓库优先匹配，
-    // 又允许 Flutter 插件按需注入额外仓库。
-    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    // ⚠️ 对 Flutter 项目必须使用 PREFER_PROJECT（三种模式实测结论）：
+    // - FAIL_ON_PROJECT_REPOS：配置期直接报错退出——Flutter 官方插件
+    //   `dev.flutter.flutter-gradle-plugin` 在 apply 时会向各 project 动态注入
+    //   maven 仓库，触发 "repository 'maven' was added by plugin ..."。
+    // - PREFER_SETTINGS：配置期能过，但 Flutter 注入的本地 engine 产物仓
+    //   （bin/cache/artifacts/engine/...，唯一提供 io.flutter:flutter_embedding_release
+    //   的仓库）会被静默忽略 → 执行期报：
+    //   "Could not find io.flutter:flutter_embedding_release:1.0.0-<hash>"
+    // - PREFER_PROJECT（正确）：project 仓（含 Flutter engine 仓）优先参与解析，
+    //   settings 仓（google/mavenCentral/JitPack 双镜像）作为兜底继续生效，
+    //   SuperLyricApi 等 JitPack 依赖依然能解析。
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     repositories {
         google()
         mavenCentral()
