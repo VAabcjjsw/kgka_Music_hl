@@ -34,14 +34,17 @@ pluginManagement {
                     //   - Gradle 会在脚本主体编译 "之前" 对 `plugins {}` block 做
                     //     一次单独的静态解析/抽取；顶层 const val 在那个阶段
                     //     根本不存在，会直接导致
-                    //     `Unresolved reference: AGP_VERSION` 脚本编译失败（见 CI
-                    //     commit 97f00d6 的失败日志）。
+                    //     `Unresolved reference: AGP_VERSION` 脚本编译失败。
                     // 为什么要有兜底？
                     //   - Flutter includeBuild + 根 build.gradle.kts 里
                     //     `subprojects { evaluationDependsOn(":app") }` 会走一条合成
                     //     的 plugin-apply 路径，此时 requested.version == null，
                     //     不能再 error()。
-                    val agpVersion = requested.version ?: "8.6.1"
+                    // ⚠️ 版本不能低于 Flutter stable 要求的最低 AGP（当前 CI 上
+                    //   是 8.11.1），否则 flutter-gradle-plugin apply 时直接报错：
+                    //   "Your project's Android Gradle Plugin version (x.y.z) is
+                    //    lower than Flutter's minimum supported version 8.11.1"。
+                    val agpVersion = requested.version ?: "8.11.1"
                     useModule("com.android.tools.build:gradle:$agpVersion")
                 }
                 "org.jetbrains.kotlin.android",
@@ -52,7 +55,8 @@ pluginManagement {
                 "jvm" -> {
                     // ⚠️ MUST_SYNC：请与 `plugins {}` block 中
                     //   `id("org.jetbrains.kotlin.android") version "x.y.z"` 保持一致。
-                    val kotlinVersion = requested.version ?: "2.0.20"
+                    // 2.2.20 是项目原始版本（本地已验证可用），不要随意降级。
+                    val kotlinVersion = requested.version ?: "2.2.20"
                     useModule("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
                 }
             }
@@ -84,17 +88,20 @@ dependencyResolutionManagement {
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
     // Android Gradle Plugin 与 Kotlin 版本说明：
-    // - AGP 8.6.x + Kotlin 2.0.x 是 Flutter stable（subosito/flutter-action@v2）
-    //   与 Gradle 8.14（gradle-wrapper.properties 中版本）兼容性最佳的组合。
-    // - 之前用 8.11.1 / 2.2.20 过于超前，触发 Flutter Fix "Starting AGP 9+..."。
-    // - 之前降到 8.7.4 时在 CI 上遇到 plugin marker artifact 解析失败
-    //   "could not resolve com.android.application.gradle.plugin:8.7.4"。
-    //   现在通过 pluginManagement.resolutionStrategy 显式映射到
-    //   com.android.tools.build:gradle:8.6.1，不再依赖 marker 发布情况。
+    // - AGP 8.11.1 是 CI 上 Flutter stable（subosito/flutter-action@v2 拉取的最新版）
+    //   要求的最低 AGP 版本，低于它 flutter-gradle-plugin apply 时会直接报错：
+    //   "Your project's AGP version is lower than Flutter's minimum supported
+    //    version of Android Gradle Plugin version 8.11.1"。
+    //   （历史教训：曾为规避 marker 解析把 AGP 降到 8.6.1/8.7.4，
+    //    结果触发上述校验失败；真正解决 marker 问题的是上面
+    //    resolutionStrategy.eachPlugin 的 useModule 显式映射。）
+    // - AGP 9+ 才开始只读 new DSL；本项目在 gradle.properties 已配置
+    //   `android.newDsl=false` 提前 opt-out，保持 Flutter 兼容。
+    // - Kotlin 2.2.20 是项目原始版本（本地已验证），与 AGP 8.11.1 + Gradle 8.14 配合正常。
     // ⚠️ MUST_SYNC：上面 pluginManagement.resolutionStrategy.eachPlugin 里的
-    //   fallback 硬编码 ("8.6.1" / "2.0.20") 必须与以下两行的 version 保持一致。
-    id("com.android.application") version "8.6.1" apply false
-    id("org.jetbrains.kotlin.android") version "2.0.20" apply false
+    //   fallback 硬编码 ("8.11.1" / "2.2.20") 必须与以下两行的 version 保持一致。
+    id("com.android.application") version "8.11.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
 
 include(":app")

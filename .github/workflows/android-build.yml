@@ -337,7 +337,24 @@ jobs:
               fallback 与 \`plugins {}\` block 两边都加 \`MUST_SYNC\` 注释（说明版本变更时两处都要改）；
               fallback 写法为：\`val agpVersion = requested.version ?: "8.6.1"\`；
               plugins 写法为：\`id("com.android.application") version "8.6.1" apply false\`。
-              当前组合：AGP 8.6.1 / Kotlin 2.0.20（Flutter stable 验证过的组合，marker 解析兼容性更好）。
+          1c. **AGP 版本低于 Flutter 要求（Flutter Fix 提示 new DSL）**
+              表现之一：\`Your project's Android Gradle Plugin version (x.y.z) is lower than
+              Flutter's minimum supported version of Android Gradle Plugin version 8.11.1.
+              Please upgrade your Android Gradle Plugin version.\`
+              （发生在 applying plugin 'dev.flutter.flutter-gradle-plugin' 阶段。）
+              原因之一：CI 上 subosito/flutter-action@v2 拉到的 Flutter stable 版本
+              要求 AGP ≥ 8.11.1；历史上为了规避 plugin marker 解析问题把 AGP 降到
+              8.6.1/8.7.4，反而触发了这个最低版本校验。
+              解决之一：把 \`android/settings.gradle.kts\` 两处 AGP 版本字面量
+              （resolutionStrategy 的 fallback 与 plugins {} block）都升到 **≥ 8.11.1**；
+              由于 eachPlugin.useModule 显式映射了真实 artifact 坐标，
+              不必担心对应 AGP 版本的 marker pom 是否发布。
+              表现之二：Flutter Fix box 提示
+              \`Starting AGP 9+, only the new DSL interface will be read … opt out of android.newDsl\`。
+              解决之二：确认 \`android/gradle.properties\` 已包含
+              \`android.newDsl=false\`（本项目已配置）与 \`android.builtInKotlin=false\`。
+              当前组合：**AGP 8.11.1 + Kotlin 2.2.20**（即项目原始、本地验证过的版本）+
+              Gradle 8.14。不要低于 Flutter 要求的 AGP 下限，也不要随意再动这两个版本。
           2. **JitPack 仓库不可达**  
              表现：\`Could not resolve com.github.HChenX:SuperLyricApi:3.4\`  
              → 查看上方 "Network probe" step；若 JitPack ❌，可在构建机上使用镜像 \`https://www.jitpack.io\`。
