@@ -334,8 +334,11 @@ class MainActivity : AudioServiceActivity() {
                         val opacity = call.argument<Double>("opacity")?.toFloat() ?: 0.8f
                         val locked = call.argument<Boolean>("locked") ?: false
                         val passthrough = call.argument<Boolean>("passthrough") ?: false
-                        val textColorLong = call.argument<Long>("textColor") ?: 0xFFFFFFFF
-                        val backgroundColorLong = call.argument<Long>("backgroundColor") ?: 0xFF1A1A2E
+                        // 颜色值小于 2^31 时经 MethodChannel 到达为 Integer，需经 Number 转换
+                        val textColorLong =
+                            (call.argument<Number>("textColor"))?.toLong() ?: 0xFFFFFFFFL
+                        val backgroundColorLong =
+                            (call.argument<Number>("backgroundColor"))?.toLong() ?: 0xFF1A1A2EL
                         val fontSize = call.argument<Double>("fontSize")?.toFloat() ?: 16f
                         val intent = Intent(this, LyricsOverlayService::class.java).apply {
                             action = LyricsOverlayService.ACTION_UPDATE_SETTINGS
@@ -419,8 +422,12 @@ class MainActivity : AudioServiceActivity() {
                         val artist = call.argument<String>("artist") ?: ""
                         val album = call.argument<String>("album") ?: ""
                         val lyricText = call.argument<String>("lyricText") ?: ""
-                        val lyricStartTime = call.argument<Long>("lyricStartTime") ?: 0L
-                        val lyricEndTime = call.argument<Long>("lyricEndTime") ?: 0L
+                        // ⚠️ Dart int 经 MethodChannel 传输后，能放进 32 位时是 Integer，
+                        // 直接 cast Long 会抛 ClassCastException，必须经 Number.toLong() 转换
+                        val lyricStartTime =
+                            (call.argument<Number>("lyricStartTime"))?.toLong() ?: 0L
+                        val lyricEndTime =
+                            (call.argument<Number>("lyricEndTime"))?.toLong() ?: 0L
                         val secondaryText = call.argument<String>("secondaryText")
                         val translationText = call.argument<String>("translationText")
                         val words = call.argument<List<Map<String, Any>>>("words")
