@@ -109,8 +109,12 @@ class SuperLyricService {
 
     final List<Map<String, dynamic>> words;
     if (line.words.isNotEmpty) {
+      // ⚠️ w.time 已是歌曲时间轴上的绝对时间（解析器已加上行起点+全局偏移，
+      // 见 music_api.dart 的 yrc 解析与 LyricLine.activeWordIndex 的用法），
+      // 不能再叠加 line.time，否则逐字时间约翻倍，接收端整句演唱期间
+      // 判定无激活字（全灰），直到行结束才兜底高亮。
       words = line.words.map((w) {
-        final start = line.time.inMilliseconds + w.time.inMilliseconds;
+        final start = w.time.inMilliseconds;
         return SuperLyricWordData(
           word: w.text,
           startTime: Duration(milliseconds: start),
