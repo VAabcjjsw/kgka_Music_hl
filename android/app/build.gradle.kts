@@ -72,7 +72,7 @@ android {
                 abiFilters.clear()
                 abiFilters.add("arm64-v8a")
             }
-·            isMinifyEnabled = false
+            isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
