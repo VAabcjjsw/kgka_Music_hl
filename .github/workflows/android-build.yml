@@ -324,14 +324,19 @@ jobs:
               \`evaluationDependsOn(":app")\` 会走一条**不带 version 信息**的 plugin apply 路径
               （正常 settings plugins {} 里的版本不会注入到这条合成路径），所以
               不能直接 error，必须给与 settings plugins {} 相同版本的硬编码兜底。
-              解决：在 \`android/settings.gradle.kts\` 文件顶部声明版本常量
-              （\`AGP_VERSION\`、\`KOTLIN_VERSION\`），
-              然后在 \`pluginManagement { resolutionStrategy { eachPlugin { … } } }\` 里，把
-              \`requested.version ?: error(...)\` 改成
-              \`requested.version ?: AGP_VERSION\`，最后
-              \`useModule("com.android.tools.build:gradle:<agp>")\` 和
-              \`useModule("org.jetbrains.kotlin:kotlin-gradle-plugin:<kotlin>")\`。
-              同时 \`plugins {}\` block 里也**复用同一份常量**，避免两份版本号漂移。
+              表现之三：Script compilation errors 形如
+              \`Unresolved reference: AGP_VERSION / KOTLIN_VERSION\`（同时出现在
+              settings.gradle.kts 的 resolutionStrategy 区与 plugins 区）。
+              原因之三：**在 settings.gradle.kts 顶层声明的 \`private const val\` 对
+              \`plugins {}\` block 是不可见的**——Gradle 会在脚本主体编译 "之前"
+              对 plugins block 做一次独立的静态抽取（classpath/plugin 版本解析），
+              此时顶层声明还不存在；不要尝试用"顶层常量去抽 plugins 版本"这种写法
+              （build.gradle.kts 里可行，settings.gradle.kts 里不行）。
+              解决：在 \`android/settings.gradle.kts\` 里把两边的版本都**写回字面量字符串**，
+              并在 \`pluginManagement { resolutionStrategy { eachPlugin { … } } }\` 的
+              fallback 与 \`plugins {}\` block 两边都加 \`MUST_SYNC\` 注释（说明版本变更时两处都要改）；
+              fallback 写法为：\`val agpVersion = requested.version ?: "8.6.1"\`；
+              plugins 写法为：\`id("com.android.application") version "8.6.1" apply false\`。
               当前组合：AGP 8.6.1 / Kotlin 2.0.20（Flutter stable 验证过的组合，marker 解析兼容性更好）。
           2. **JitPack 仓库不可达**  
              表现：\`Could not resolve com.github.HChenX:SuperLyricApi:3.4\`  
