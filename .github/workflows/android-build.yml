@@ -242,10 +242,14 @@ jobs:
           ## ❌ Android APK 构建失败
 
           ### 常见失败原因速查
-          1. **仓库冲突 (FAIL_ON_PROJECT_REPOS)**  
-             表现：\`repository 'Google' was added by build file 'build.gradle.kts'\`  
+          1. **仓库冲突 (FAIL_ON_PROJECT_REPOS)**
+             表现之一：\`repository 'Google' was added by build file 'build.gradle.kts'\`
              → 根 android/build.gradle.kts 不允许再声明 \`allprojects { repositories {} }\`，
              因为 settings.gradle.kts 已声明 \`RepositoriesMode.FAIL_ON_PROJECT_REPOS\`。
+             表现之二：\`repository 'maven' was added by plugin 'dev.flutter.flutter-gradle-plugin'\`
+             → Flutter 官方插件在 apply 时会动态注入 maven 仓库，因此**不能使用
+             FAIL_ON_PROJECT_REPOS**；必须改为
+             \`repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\`。
           2. **JitPack 仓库不可达**  
              表现：\`Could not resolve com.github.HChenX:SuperLyricApi:3.4\`  
              → 查看上方 "Network probe" step；若 JitPack ❌，可在构建机上使用镜像 \`https://www.jitpack.io\`。
