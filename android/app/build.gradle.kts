@@ -48,7 +48,13 @@ android {
         applicationId = "com.hoilai.mm.music"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // 不能用 flutter.minSdkVersion（CI 的 Flutter 3.47.1 解析为 24）：
+        // 车载歌词依赖 SuperLyricApi 3.4 的 AAR 清单声明 minSdk 26（Android 8.0），
+        // 低于 26 会在 Manifest 合并阶段直接失败：
+        //   "uses-sdk:minSdkVersion 24 cannot be smaller than version 26 declared
+        //    in library com.github.HChenX:SuperLyricApi"
+        // Android 8.0（2017 年发布）覆盖 99%+ 活跃设备，直接提到 26。
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
