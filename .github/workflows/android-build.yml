@@ -1,0 +1,172 @@
+name: Build Android APK (on push)
+
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+    paths-ignore:
+      - '**/*.md'
+      - 'screenshots/**'
+      - '.github/workflows/ios-*.yml'
+  pull_request:
+    branches:
+      - 'main'
+      - 'master'
+  workflow_dispatch:
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android-apk:
+    name: Build APK (arm64-v8a, release)
+    runs-on: ubuntu-latest
+
+    env:
+      JAVA_VERSION: '17'
+      FLUTTER_CHANNEL: 'stable'
+      KEYSTORE_PATH: 'android/keystore/release.jks'
+      KEY_PROPERTIES_PATH: 'android/key.properties'
+
+    steps:
+      - name: Checkout repository (with LFS)
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Setup JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Gradle (cache wrapper + distributions)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+          cache-write-only: false
+          validate-wrappers: false
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+
+      - name: Print toolchain versions
+        run: |
+          echo "--- java ---"
+          java -version
+          echo "--- flutter ---"
+          flutter --version
+          echo "--- gradle wrapper properties ---"
+          cat android/gradle/wrapper/gradle-wrapper.properties 2>/dev/null || true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Prepare release keystore (from GitHub Secrets)
+        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_ALIAS != '' && secrets.KEY_PASSWORD != '' }}
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$KEYSTORE_PATH")"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          cat > "$KEY_PROPERTIES_PATH" <<PROPS
+          storeFile=keystore/release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          PROPS
+          echo "✅ keystore decoded & key.properties written (release signing ENABLED)"
+
+      - name: Build Flutter Android APK (release, arm64-v8a)
+        run: |
+          flutter build apk --release \
+            --target-platform android-arm64 \
+            --no-tree-shake-icons 2>&1 | tail -n 120
+          echo "--- flutter-apk outputs ---"
+          ls -lh build/app/outputs/flutter-apk/ 2>/dev/null || true
+          echo "--- gradle apk outputs (fallback) ---"
+          find android/app/build/outputs/apk -type f -name '*.apk' -printf '%p %s\n' 2>/dev/null || true
+
+      - name: Resolve APK artifact path
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=""
+          # 1) Prefer Flutter's canonical output directory
+          for f in build/app/outputs/flutter-apk/app-release.apk \
+                   build/app/outputs/flutter-apk/app-arm64-v8a-release.apk; do
+            if [[ -f "$f" ]]; then APK="$f"; break; fi
+          done
+          # 2) Fallback to Gradle outputs (assemble* output)
+          if [[ -z "$APK" ]]; then
+            CANDIDATE="$(find android/app/build/outputs/apk -type f -name '*.apk' \
+              | grep -i release | sort | tail -n 1)"
+            [[ -n "$CANDIDATE" ]] && APK="$CANDIDATE"
+          fi
+          if [[ -z "$APK" ]]; then
+            echo "❌ No APK produced. See build logs above." >&2
+            exit 1
+          fi
+          SIZE="$(stat -c '%s' "$APK" 2>/dev/null || stat -f '%z' "$APK" 2>/dev/null)"
+          SHA="$(sha256sum "$APK" | awk '{print $1}')"
+          echo "apk_path=$APK"            >> "$GITHUB_OUTPUT"
+          echo "apk_size_bytes=$SIZE"    >> "$GITHUB_OUTPUT"
+          echo "apk_sha256=$SHA"         >> "$GITHUB_OUTPUT"
+          NAME_BASE="kgka-music-android"
+          REF="${GITHUB_REF_NAME//\//-}"
+          SHA7="${GITHUB_SHA::7}"
+          TS="$(date -u +%Y%m%d-%H%M%SZ)"
+          # Signed or unsigned indicator
+          if unzip -p "$APK" 'META-INF/*.RSA' >/dev/null 2>&1 || unzip -p "$APK" 'META-INF/*.DSA' >/dev/null 2>&1; then
+            SUFFIX="signed"
+          else
+            SUFFIX="unsigned-debug"
+          fi
+          ARTIFACT_NAME="${NAME_BASE}-${REF}-${SHA7}-${TS}-${SUFFIX}"
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "✅ resolved APK: $APK (${SIZE} bytes, sha256=${SHA:0:12}...)"
+          echo "   artifact upload name: $ARTIFACT_NAME"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.artifact_name }}
+          path: ${{ steps.apk.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 45
+
+      - name: Build summary
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## ✅ Android APK 构建完成
+
+          | 项 | 值 |
+          |---|---|
+          | 触发分支 / PR | \`${{ github.ref_name }}\` |
+          | commit | \`${{ github.sha }}\` |
+          | APK 文件 | \`${{ steps.apk.outputs.apk_path }}\` |
+          | 大小 | ${{ steps.apk.outputs.apk_size_bytes }} 字节 |
+          | SHA256 | \`${{ steps.apk.outputs.apk_sha256 }}\` |
+          | 产物 Artifact 名 | \`${{ steps.apk.outputs.artifact_name }}\` |
+          | 保留天数 | 45 天 |
+
+          > 下载：点击本页上方 **Artifacts** 卡片（或 **Summary** 区）即可下载 \`${{ steps.apk.outputs.artifact_name }}.zip\`，解压后得到 APK。
+
+          ### 签名说明
+          - 若在仓库 **Settings → Secrets and variables → Actions** 中配置了 \`KEYSTORE_BASE64\` / \`KEYSTORE_PASSWORD\` / \`KEY_ALIAS\` / \`KEY_PASSWORD\` 四个 Secret，则本次构建使用正式 release 签名。
+          - 否则使用 Android SDK 默认 debug 签名（文件名带 \`debug\` 后缀）。
+
+          EOF
