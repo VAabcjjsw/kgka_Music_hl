@@ -70,7 +70,6 @@ jobs:
         run: flutter pub get
 
       - name: Prepare release keystore (from GitHub Secrets)
-        if: ${{ secrets.KEYSTORE_BASE64 != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_ALIAS != '' && secrets.KEY_PASSWORD != '' }}
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -79,6 +78,14 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          # 注意：GitHub Actions 禁止在 workflow if: 表达式里使用 secrets.*，
+          # 所以把"secrets 是否已全部配置"的判断挪到 shell 内部进行。
+          if [[ -z "${KEYSTORE_BASE64:-}" || -z "${KEYSTORE_PASSWORD:-}" \
+             || -z "${KEY_ALIAS:-}"          || -z "${KEY_PASSWORD:-}" ]]; then
+            echo "ℹ️ 未检测到完整的 release 签名 Secrets (KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD)"
+            echo "   跳过 release keystore 注入，本次构建将使用 SDK 默认 debug 签名。"
+            exit 0
+          fi
           mkdir -p "$(dirname "$KEYSTORE_PATH")"
           echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
           cat > "$KEY_PROPERTIES_PATH" <<PROPS
