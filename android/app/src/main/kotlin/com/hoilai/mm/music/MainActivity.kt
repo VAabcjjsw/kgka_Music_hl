@@ -50,6 +50,7 @@ class MainActivity : AudioServiceActivity() {
     companion object {
         private const val REQUEST_READ_AUDIO = 1001
         private const val TAG_SUPER_LYRIC = "SuperLyricPublisher"
+        private const val TAG_BLUETOOTH_LYRICS = "BluetoothLyrics"
     }
 
     private val downloadReceiver = object : BroadcastReceiver() {
@@ -582,8 +583,14 @@ class MainActivity : AudioServiceActivity() {
                             setPackage(null)
                         })
 
+                        Log.d(
+                            TAG_BLUETOOTH_LYRICS,
+                            "metaChanged ok: \"$title\"/\"$artist\", lyric=\"${lyric.take(24)}\", " +
+                                "pos=${positionMs}ms, playing=$playing, track=$track/$listSize, 7 actions sent"
+                        )
                         result.success(true)
                     }.onFailure { error ->
+                        Log.w(TAG_BLUETOOTH_LYRICS, "broadcastMetaChanged failed: ${error.message}")
                         result.success(false)
                     }
                 }
@@ -613,11 +620,16 @@ class MainActivity : AudioServiceActivity() {
                             setPackage(null)
                         })
                         sendBroadcast(Intent("com.tencent.qqmusic.playstatechanged").apply {
-                            putExtras(Bundle(extras))
+                            putExtras(extras)
                             setPackage(null)
                         })
+                        Log.d(
+                            TAG_BLUETOOTH_LYRICS,
+                            "playStateChanged ok: \"$title\", playing=$playing, pos=${positionMs}ms"
+                        )
                         result.success(true)
                     }.onFailure { error ->
+                        Log.w(TAG_BLUETOOTH_LYRICS, "broadcastPlayStateChanged failed: ${error.message}")
                         result.success(false)
                     }
                 }
