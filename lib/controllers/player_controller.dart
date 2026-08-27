@@ -624,10 +624,10 @@ class PlayerController extends ChangeNotifier {
           artist: currentSong!.artist,
           album: currentSong!.albumName,
           lyric: '',
-          position: _position,
+          position: position,
           duration: currentSong!.duration ?? Duration.zero,
           playing: isPlaying,
-          trackIndex: queueIndex,
+          trackIndex: currentIndex,
           listSize: queue.length,
         ),
       );
@@ -1424,7 +1424,7 @@ class PlayerController extends ChangeNotifier {
           position: position,
           duration: song.duration ?? Duration.zero,
           playing: isPlaying,
-          trackIndex: queueIndex,
+          trackIndex: currentIndex,
           listSize: queue.length,
         ),
       );
