@@ -54,19 +54,21 @@ class SuperLyricService {
   /// 注册为 SuperLyric 发布者（应用启动时调用一次即可）。
   ///
   /// 返回是否注册成功。未安装 SuperLyric 模块时返回 false，不会抛错。
+  /// 失败不会缓存结果——之后每次调用都会重新尝试（启动时系统服务可能未就绪）。
   Future<bool> registerPublisher() async {
     if (!isSupportedPlatform) return false;
     if (_registered) return true;
     try {
       final result = await _channel.invokeMethod<bool>('registerPublisher');
       final ok = result ?? false;
-      if (ok) {
-        _registered = true;
-      }
+      _registered = ok;
+      debugPrint('[SuperLyric] registerPublisher -> $ok');
       return ok;
     } on MissingPluginException {
+      debugPrint('[SuperLyric] registerPublisher: MissingPluginException');
       return false;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[SuperLyric] registerPublisher failed: $e');
       return false;
     }
   }
@@ -119,6 +121,15 @@ class SuperLyricService {
       words = const [];
     }
 
+    if (!_registered) {
+      // 自愈：启动时注册可能因系统服务未就绪而失败，这里补注册一次。
+      final ok = await registerPublisher();
+      if (!ok) {
+        debugPrint('[SuperLyric] sendLyric skipped: not registered');
+        return;
+      }
+    }
+
     try {
       await _channel.invokeMethod<void>('sendLyric', {
         'title': song.title,
@@ -132,21 +143,41 @@ class SuperLyricService {
         'words': words,
       });
     } on MissingPluginException {
-      // ignore
-    } catch (_) {
-      // ignore: 失败不影响正常播放
+      debugPrint('[SuperLyric] sendLyric: MissingPluginException');
+    } catch (e) {
+      // 失败不影响正常播放，但打印日志方便排查
+      debugPrint('[SuperLyric] sendLyric failed: $e');
     }
   }
 
   /// 发送播放停止/暂停事件。
   Future<void> sendStop() async {
-    if (!isSupportedPlatform || !_registered) return;
+    if (!isSupportedPlatform) return;
+    if (!_registered) {
+      final ok = await registerPublisher();
+      if (!ok) return;
+    }
     try {
       await _channel.invokeMethod<void>('sendStop');
     } on MissingPluginException {
-      // ignore
-    } catch (_) {
-      // ignore
+      debugPrint('[SuperLyric] sendStop: MissingPluginException');
+    } catch (e) {
+      debugPrint('[SuperLyric] sendStop failed: $e');
+    }
+  }
+
+  /// 诊断信息：系统服务可用性、本地注册标志、系统服务中的真实注册状态。
+  ///
+  /// 用于排查"接收端列表里有本应用但收不到歌词"这类问题。
+  Future<Map<String, dynamic>?> debugState() async {
+    if (!isSupportedPlatform) return null;
+    try {
+      final result =
+          await _channel.invokeMethod<Map<dynamic, dynamic>>('debugState');
+      return result?.cast<String, dynamic>();
+    } catch (e) {
+      debugPrint('[SuperLyric] debugState failed: $e');
+      return null;
     }
   }
 }

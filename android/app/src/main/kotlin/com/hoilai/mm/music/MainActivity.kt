@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
 import android.media.audiofx.BassBoost
 import android.media.audiofx.Equalizer
 import android.media.audiofx.DynamicsProcessing
@@ -48,6 +49,7 @@ class MainActivity : AudioServiceActivity() {
 
     companion object {
         private const val REQUEST_READ_AUDIO = 1001
+        private const val TAG_SUPER_LYRIC = "SuperLyricPublisher"
     }
 
     private val downloadReceiver = object : BroadcastReceiver() {
@@ -373,6 +375,7 @@ class MainActivity : AudioServiceActivity() {
                     }.onSuccess { available ->
                         result.success(available)
                     }.onFailure { error ->
+                        Log.w(TAG_SUPER_LYRIC, "isAvailable failed: ${error.message}")
                         result.success(false)
                     }
                 }
@@ -382,8 +385,14 @@ class MainActivity : AudioServiceActivity() {
                             SuperLyricHelper.registerPublisher()
                             superLyricRegistered = true
                         }
-                        result.success(true)
+                        // 以系统服务里的真实注册状态为准（本地标志位可能过期）
+                        val registered = runCatching {
+                            SuperLyricHelper.isPublisherRegistered()
+                        }.getOrNull() ?: superLyricRegistered
+                        Log.d(TAG_SUPER_LYRIC, "registerPublisher: registered=$registered")
+                        result.success(registered)
                     }.onFailure { error ->
+                        Log.w(TAG_SUPER_LYRIC, "registerPublisher failed: ${error.message}")
                         result.success(false)
                     }
                 }
@@ -399,11 +408,13 @@ class MainActivity : AudioServiceActivity() {
                     }
                 }
                 "sendLyric" -> {
-                    if (!superLyricRegistered) {
-                        result.error("not_registered", "SuperLyric publisher not registered", null)
-                        return@setMethodCallHandler
-                    }
                     runCatching {
+                        // 自愈：启动时注册可能因系统服务未就绪而失败，
+                        // 这里在首次发送前补注册一次（幂等，服务端按 UID 去重）
+                        if (!superLyricRegistered) {
+                            SuperLyricHelper.registerPublisher()
+                            superLyricRegistered = true
+                        }
                         val title = call.argument<String>("title") ?: ""
                         val artist = call.argument<String>("artist") ?: ""
                         val album = call.argument<String>("album") ?: ""
@@ -449,22 +460,44 @@ class MainActivity : AudioServiceActivity() {
                             )
                         }
                         SuperLyricHelper.sendLyric(lyricData)
+                        Log.d(
+                            TAG_SUPER_LYRIC,
+                            "sendLyric ok: \"$lyricText\" ($lyricStartTime-$lyricEndTime ms), " +
+                                "words=${lyricWords?.size ?: 0}, " +
+                                "secondary=${!secondaryText.isNullOrBlank()}, " +
+                                "translation=${!translationText.isNullOrBlank()}"
+                        )
                         result.success(true)
                     }.onFailure { error ->
+                        Log.w(TAG_SUPER_LYRIC, "sendLyric failed: ${error.message}")
                         result.error("send_lyric_failed", error.message, null)
                     }
                 }
                 "sendStop" -> {
-                    if (!superLyricRegistered) {
-                        result.error("not_registered", "SuperLyric publisher not registered", null)
-                        return@setMethodCallHandler
-                    }
                     runCatching {
+                        if (!superLyricRegistered) {
+                            SuperLyricHelper.registerPublisher()
+                            superLyricRegistered = true
+                        }
                         SuperLyricHelper.sendStop(SuperLyricData())
+                        Log.d(TAG_SUPER_LYRIC, "sendStop ok")
                         result.success(true)
                     }.onFailure { error ->
+                        Log.w(TAG_SUPER_LYRIC, "sendStop failed: ${error.message}")
                         result.error("send_stop_failed", error.message, null)
                     }
+                }
+                "debugState" -> {
+                    result.success(
+                        mapOf(
+                            "serviceAvailable" to
+                                (runCatching { SuperLyricHelper.isAvailable() }.getOrNull() ?: false),
+                            "localRegisteredFlag" to superLyricRegistered,
+                            "publisherRegistered" to
+                                (runCatching { SuperLyricHelper.isPublisherRegistered() }
+                                    .getOrNull() ?: false),
+                        )
+                    )
                 }
                 else -> result.notImplemented()
             }
