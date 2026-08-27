@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 1
 
       - name: Setup JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -69,6 +69,31 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Network probe (JitPack / Google Maven / Maven Central)
+        shell: bash
+        run: |
+          set +e
+          echo "--- HTTPS probe ---"
+          for pair in \
+            "Google-Maven|https://dl.google.com/dl/android/maven2/index.html" \
+            "Maven-Central|https://repo1.maven.org/maven2/" \
+            "JitPack|https://jitpack.io/com/github/HChenX/SuperLyricApi/3.4/SuperLyricApi-3.4.pom"; do
+            NAME="${pair%%|*}"
+            URL="${pair#*|}"
+            START_MS=$(date +%s%3N)
+            CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -L "$URL" 2>&1)"
+            END_MS=$(date +%s%3N)
+            ELAPSED=$(( END_MS - START_MS ))
+            if [[ "$CODE" =~ ^(200|301|302|304|401|403|404)$ ]]; then
+              echo "  ✅ $NAME HTTP $CODE  (${ELAPSED} ms)  <$URL>"
+            else
+              echo "  ❌ $NAME HTTP $CODE (${ELAPSED} ms)  <$URL>"
+              echo "     ⚠️  当前 GitHub Actions 构建机无法访问该仓库；依赖解析可能失败。"
+              echo "     💡 若是 JitPack：可将仓库临时切换为镜像 (https://www.jitpack.io) 或在 workflow 里配置代理。"
+            fi
+          done
+          echo "--- done ---"
+
       - name: Prepare release keystore (from GitHub Secrets)
         shell: bash
         env:
@@ -97,14 +122,26 @@ jobs:
           echo "✅ keystore decoded & key.properties written (release signing ENABLED)"
 
       - name: Build Flutter Android APK (release, arm64-v8a)
+        shell: bash
         run: |
+          set -euo pipefail
+          LOG_FILE="build/android-build.log"
+          mkdir -p "$(dirname "$LOG_FILE")"
+          echo "🚀 flutter build apk --release --target-platform android-arm64 --no-tree-shake-icons"
+          # 用 tee 同时输出到控制台与日志文件；pipefail 保证 flutter 失败时整个步骤也失败
+          # (之前的 | tail 会吞掉 flutter 的非零退出码导致误判"构建成功")
           flutter build apk --release \
             --target-platform android-arm64 \
-            --no-tree-shake-icons 2>&1 | tail -n 120
+            --no-tree-shake-icons \
+            2>&1 | tee "$LOG_FILE"
+
+          echo
           echo "--- flutter-apk outputs ---"
           ls -lh build/app/outputs/flutter-apk/ 2>/dev/null || true
           echo "--- gradle apk outputs (fallback) ---"
           find android/app/build/outputs/apk -type f -name '*.apk' -printf '%p %s\n' 2>/dev/null || true
+          echo "--- build log size ---"
+          wc -l "$LOG_FILE" 2>/dev/null || true
 
       - name: Resolve APK artifact path
         id: apk
@@ -176,4 +213,55 @@ jobs:
           - 若在仓库 **Settings → Secrets and variables → Actions** 中配置了 \`KEYSTORE_BASE64\` / \`KEYSTORE_PASSWORD\` / \`KEY_ALIAS\` / \`KEY_PASSWORD\` 四个 Secret，则本次构建使用正式 release 签名。
           - 否则使用 Android SDK 默认 debug 签名（文件名带 \`debug\` 后缀）。
 
+          EOF
+
+      - name: Upload build diagnostics (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ github.ref_name }}-${{ github.sha }}
+          path: |
+            build/android-build.log
+            android/build/outputs/**
+            android/build/reports/**
+            android/build/tmp/**
+            android/.gradle/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Failure summary
+        if: failure()
+        run: |
+          FAIL_HINT="(未获取到)"
+          if [[ -f "build/android-build.log" ]]; then
+            # 提取最后 80 行最关键的失败信息
+            FAIL_HINT="$(tail -n 80 build/android-build.log | sed 's/\x1b\[[0-9;]*m//g' | awk 'NF' | tail -n 30)"
+          fi
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+
+          ## ❌ Android APK 构建失败
+
+          ### 常见失败原因速查
+          1. **仓库冲突 (FAIL_ON_PROJECT_REPOS)**  
+             表现：\`repository 'Google' was added by build file 'build.gradle.kts'\`  
+             → 根 android/build.gradle.kts 不允许再声明 \`allprojects { repositories {} }\`，
+             因为 settings.gradle.kts 已声明 \`RepositoriesMode.FAIL_ON_PROJECT_REPOS\`。
+          2. **JitPack 仓库不可达**  
+             表现：\`Could not resolve com.github.HChenX:SuperLyricApi:3.4\`  
+             → 查看上方 "Network probe" step；若 JitPack ❌，可在构建机上使用镜像 \`https://www.jitpack.io\`。
+          3. **Gradle Wrapper 缺失 gradle-wrapper.jar**  
+             表现：\`ClassNotFoundException: org.gradle.wrapper.GradleWrapperMain\`  
+             → 本 workflow 使用 \`flutter build apk\`（而非裸 \`./gradlew\`），Flutter SDK 会
+             在 CI 中自动生成完整 wrapper 三件套；若仍失败则需本地执行 \`flutter build apk\` 生成
+             \`gradlew + gradlew.bat + gradle/wrapper/gradle-wrapper.jar\` 并提交到仓库。
+          4. **签名信息不完整**  
+             表现：KeyStore 文件无法打开 / \`Invalid keystore format\` → 检查 Secrets 编码与密码。
+
+          ### 构建日志尾部（最近 30 行非空内容）
+          \`\`\`
+          $FAIL_HINT
+          \`\`\`
+
+          > 完整日志、Gradle reports 与输出目录已打包为 \`build-diagnostics-…\` artifact，
+          > 可在 Artifacts 卡片下载后排查。
           EOF
