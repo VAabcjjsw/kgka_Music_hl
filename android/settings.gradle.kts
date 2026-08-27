@@ -1,3 +1,11 @@
+// ===== Flutter / AGP / Kotlin 版本集中声明 =====
+// 注意：以下两个版本号必须保持与下方 plugins {} block 中声明的版本一致。
+// resolutionStrategy.eachPlugin 在某些路径下（例如 Flutter plugin-loader
+// 或 includeBuild 合成的 apply 不带 version）拿不到 requested.version，
+// 所以必须有硬编码兜底，而不是直接 error() 退出。
+private const val AGP_VERSION = "8.6.1"
+private const val KOTLIN_VERSION = "2.0.20"
+
 pluginManagement {
     val flutterSdkPath =
         run {
@@ -28,8 +36,11 @@ pluginManagement {
                 "com.android.dynamic-feature",
                 "com.android.test",
                 "com.android.instantapp" -> {
-                    val agpVersion = requested.version
-                        ?: error("AGP plugin `${requested.id.id}` must declare a version in settings plugins {}")
+                    // Flutter plugin-loader / includeBuild 在某些求值路径下（例如
+                    // 根 build.gradle.kts 中 evaluationDependsOn(":app") 触发的早期
+                    // 求值）会不带 version 信息地请求该 plugin；此时
+                    // requested.version 为 null，因此必须用兜底常量而不是 error()。
+                    val agpVersion = requested.version ?: AGP_VERSION
                     useModule("com.android.tools.build:gradle:$agpVersion")
                 }
                 "org.jetbrains.kotlin.android",
@@ -38,8 +49,7 @@ pluginManagement {
                 "org.jetbrains.kotlin.jvm",
                 "kotlin",
                 "jvm" -> {
-                    val kotlinVersion = requested.version
-                        ?: error("Kotlin plugin `${requested.id.id}` must declare a version in settings plugins {}")
+                    val kotlinVersion = requested.version ?: KOTLIN_VERSION
                     useModule("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
                 }
             }
@@ -78,8 +88,8 @@ plugins {
     //   "could not resolve com.android.application.gradle.plugin:8.7.4"。
     //   现在通过 pluginManagement.resolutionStrategy 显式映射到
     //   com.android.tools.build:gradle:8.6.1，不再依赖 marker 发布情况。
-    id("com.android.application") version "8.6.1" apply false
-    id("org.jetbrains.kotlin.android") version "2.0.20" apply false
+    id("com.android.application") version AGP_VERSION apply false
+    id("org.jetbrains.kotlin.android") version KOTLIN_VERSION apply false
 }
 
 include(":app")

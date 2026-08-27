@@ -310,19 +310,29 @@ jobs:
              → Flutter 官方插件在 apply 时会动态注入 maven 仓库，因此**不能使用
              FAIL_ON_PROJECT_REPOS**；必须改为
              \`repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)\`。
-          1b. **AGP / Kotlin Gradle Plugin Marker 找不到**
-              表现：\`Plugin [id: 'com.android.application', version: 'x.y.z', apply: false] was not found …
+          1b. **AGP / Kotlin Gradle Plugin Marker 找不到（或 resolutionStrategy 报必须声明版本）**
+              表现之一：\`Plugin [id: 'com.android.application', version: 'x.y.z', apply: false] was not found …
               could not resolve plugin artifact 'com.android.application.gradle.plugin:x.y.z'\`。
-              原因：Google Maven 并非对每个 AGP 小版本都发布 plugin marker pom（用于 \`plugins {}\`
+              原因之一：Google Maven 并非对每个 AGP 小版本都发布 plugin marker pom（用于 \`plugins {}\`
               语法的解析），但真实实现 jar \`com.android.tools.build:gradle:x.y.z\` 是存在的；
               在海外 CI 环境更容易触发 marker 解析 404。
-              解决：在 \`android/settings.gradle.kts\` 的
-              \`pluginManagement { resolutionStrategy { eachPlugin { … } } }\` 里，把
-              \`com.android.application / com.android.library / org.jetbrains.kotlin.android / kotlin-android\`
-              等 id 显式映射到真实坐标：
-              \`useModule("com.android.tools.build:gradle:<AGP_VER>")\` 和
-              \`useModule("org.jetbrains.kotlin:kotlin-gradle-plugin:<KOTLIN_VER>")\`；
-              同时把 AGP 降到 8.6.1、Kotlin 降到 2.0.20（Flutter stable 验证过的组合，进一步降低解析风险）。
+              表现之二：\`AGP plugin 'com.android.application' must declare a version in settings plugins {}\`
+              （出现在 configuring project ':app' 阶段，根 android/build.gradle.kts line:12
+              \`evaluationDependsOn(":app")\` 附近）。
+              原因之二：\`resolutionStrategy.eachPlugin {}\` 中直接
+              \`error()\` 了 \`requested.version == null\` 情况——但 Flutter 的 includeBuild +
+              \`evaluationDependsOn(":app")\` 会走一条**不带 version 信息**的 plugin apply 路径
+              （正常 settings plugins {} 里的版本不会注入到这条合成路径），所以
+              不能直接 error，必须给与 settings plugins {} 相同版本的硬编码兜底。
+              解决：在 \`android/settings.gradle.kts\` 文件顶部声明版本常量
+              （\`AGP_VERSION\`、\`KOTLIN_VERSION\`），
+              然后在 \`pluginManagement { resolutionStrategy { eachPlugin { … } } }\` 里，把
+              \`requested.version ?: error(...)\` 改成
+              \`requested.version ?: AGP_VERSION\`，最后
+              \`useModule("com.android.tools.build:gradle:<agp>")\` 和
+              \`useModule("org.jetbrains.kotlin:kotlin-gradle-plugin:<kotlin>")\`。
+              同时 \`plugins {}\` block 里也**复用同一份常量**，避免两份版本号漂移。
+              当前组合：AGP 8.6.1 / Kotlin 2.0.20（Flutter stable 验证过的组合，marker 解析兼容性更好）。
           2. **JitPack 仓库不可达**  
              表现：\`Could not resolve com.github.HChenX:SuperLyricApi:3.4\`  
              → 查看上方 "Network probe" step；若 JitPack ❌，可在构建机上使用镜像 \`https://www.jitpack.io\`。
